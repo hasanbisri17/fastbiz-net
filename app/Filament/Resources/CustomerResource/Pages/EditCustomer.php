@@ -18,43 +18,30 @@ class EditCustomer extends EditRecord
                 ->before(function () {
                     $customer = $this->record;
                     
-                    // Delete associated IP binding if exists
+                    // Show notification about IP binding removal
                     if ($customer->ip_address) {
-                        $customer->ipBinding?->delete();
+                        $binding = $customer->ipBinding;
+                        if ($binding && $binding->mikrotik_id) {
+                            try {
+                                $routerService = app(\App\Services\RouterOSService::class);
+                                $router = $customer->router;
+                                $routerService->connect($router->host, $router->username, $router->password, $router->port);
+                                $routerService->removeIpBinding($binding->mikrotik_id);
+
+                                Notification::make()
+                                    ->success()
+                                    ->title('IP Binding Removed')
+                                    ->body("IP binding was successfully removed from router {$router->name}")
+                                    ->send();
+                            } catch (\Exception $e) {
+                                Notification::make()
+                                    ->warning()
+                                    ->title('IP Binding Removal Warning')
+                                    ->body("Failed to remove IP binding from router: {$e->getMessage()}")
+                                    ->send();
+                            }
+                        }
                     }
-                }),
-            Actions\Action::make('generate_invoice')
-                ->icon('heroicon-o-document-text')
-                ->action(function () {
-                    $customer = $this->record;
-                    
-                    // Check if invoice already exists for current month
-                    $existingInvoice = $customer->invoices()
-                        ->whereMonth('invoice_date', now()->month)
-                        ->whereYear('invoice_date', now()->year)
-                        ->exists();
-
-                    if ($existingInvoice) {
-                        Notification::make()
-                            ->warning()
-                            ->title('Invoice already exists for this month')
-                            ->send();
-                        return;
-                    }
-
-                    $invoice = $customer->invoices()->create([
-                        'service_package_id' => $customer->service_package_id,
-                        'amount' => $customer->servicePackage->price,
-                        'invoice_date' => now(),
-                        'due_date' => $customer->due_date,
-                    ]);
-
-                    Notification::make()
-                        ->success()
-                        ->title('Invoice generated successfully')
-                        ->send();
-
-                    $this->redirect(InvoiceResource::getUrl('edit', ['record' => $invoice]));
                 }),
         ];
     }
@@ -68,29 +55,68 @@ class EditCustomer extends EditRecord
     {
         $customer = $this->record;
 
-        // Update IP binding if IP address changed
+        // Show notification about IP binding sync if IP or MAC changed
         if ($customer->wasChanged(['ip_address', 'mac_address', 'router_id'])) {
-            if ($customer->ip_address) {
+            try {
+                $routerService = app(\App\Services\RouterOSService::class);
+                $router = $customer->router;
+                $routerService->connect($router->host, $router->username, $router->password, $router->port);
+
                 $binding = $customer->ipBinding;
-                if ($binding) {
-                    $binding->update([
-                        'router_id' => $customer->router_id,
-                        'mac_address' => $customer->mac_address,
-                        'ip_address' => $customer->ip_address,
-                    ]);
+                if ($binding && $binding->mikrotik_id) {
+                    // Update existing binding in Mikrotik
+                    $routerService->updateIpBinding(
+                        $binding->mikrotik_id,
+                        $customer->ip_address,
+                        'bypassed',
+                        $customer->mac_address,
+                        "Customer: {$customer->name}",
+                        false
+                    );
+
+                    Notification::make()
+                        ->success()
+                        ->title('IP Binding Updated')
+                        ->body("IP binding was successfully updated in router {$router->name}")
+                        ->send();
                 } else {
-                    \App\Models\IpBinding::create([
-                        'router_id' => $customer->router_id,
-                        'mac_address' => $customer->mac_address,
-                        'ip_address' => $customer->ip_address,
-                        'type' => 'bypassed',
-                        'comment' => "Customer: {$customer->name}",
-                    ]);
+                    // Create new binding in Mikrotik
+                    $response = $routerService->addIpBinding(
+                        $customer->ip_address,
+                        'bypassed',
+                        $customer->mac_address,
+                        "Customer: {$customer->name}",
+                        false
+                    );
+
+                    if (isset($response[0]['.id'])) {
+                        Notification::make()
+                            ->success()
+                            ->title('IP Binding Created')
+                            ->body("IP binding was successfully created in router {$router->name}")
+                            ->send();
+                    }
                 }
-            } else {
-                // Remove IP binding if IP address is cleared
-                $customer->ipBinding?->delete();
+            } catch (\Exception $e) {
+                Notification::make()
+                    ->danger()
+                    ->title('IP Binding Failed')
+                    ->body("Failed to sync IP binding with router: {$e->getMessage()}")
+                    ->send();
             }
+        }
+
+        // Update customer's due date if status changed to active
+        if ($customer->wasChanged('status') && $customer->status === 'active') {
+            $customer->update([
+                'due_date' => now()->addMonth(),
+            ]);
+
+            Notification::make()
+                ->success()
+                ->title('Due Date Updated')
+                ->body('Customer due date has been extended by one month.')
+                ->send();
         }
     }
 }

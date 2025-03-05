@@ -38,7 +38,7 @@ FastBiz-Net is a comprehensive ISP management system built with Laravel and Fila
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/fastbiz-net.git
+git clone https://github.com/hasanbisri17/fastbiz-net.git
 cd fastbiz-net
 ```
 

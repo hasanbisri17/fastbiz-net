@@ -19,19 +19,35 @@ class CreateCustomer extends CreateRecord
     {
         $customer = $this->record;
 
-        // Generate first invoice if customer is active
-        if ($customer->status === 'active') {
-            $customer->invoices()->create([
-                'service_package_id' => $customer->service_package_id,
-                'amount' => $customer->servicePackage->price,
-                'invoice_date' => now(),
-                'due_date' => $customer->due_date,
-            ]);
+        // Show notification about IP binding sync
+        if ($customer->ip_address) {
+            try {
+                $routerService = app(\App\Services\RouterOSService::class);
+                $router = $customer->router;
+                
+                $routerService->connect($router->host, $router->username, $router->password, $router->port);
+                $response = $routerService->addIpBinding(
+                    $customer->ip_address,
+                    'bypassed',
+                    $customer->mac_address,
+                    "Customer: {$customer->name}",
+                    false
+                );
 
-            Notification::make()
-                ->success()
-                ->title('Initial invoice generated')
-                ->send();
+                if (isset($response[0]['.id'])) {
+                    Notification::make()
+                        ->success()
+                        ->title('IP Binding Created')
+                        ->body("IP binding was successfully created in router {$router->name}")
+                        ->send();
+                }
+            } catch (\Exception $e) {
+                Notification::make()
+                    ->danger()
+                    ->title('IP Binding Failed')
+                    ->body("Failed to create IP binding in router: {$e->getMessage()}")
+                    ->send();
+            }
         }
     }
 }

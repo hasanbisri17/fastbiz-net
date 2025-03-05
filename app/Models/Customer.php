@@ -54,33 +54,92 @@ class Customer extends Model
         static::created(function ($customer) {
             // Create IP binding if IP address is set
             if ($customer->ip_address) {
-                IpBinding::create([
+                // Create local IP binding record
+                $binding = IpBinding::create([
                     'router_id' => $customer->router_id,
                     'mac_address' => $customer->mac_address,
                     'ip_address' => $customer->ip_address,
                     'type' => 'bypassed',
                     'comment' => "Customer: {$customer->name}",
                 ]);
+
+                // Sync with Mikrotik
+                try {
+                    $routerService = app(\App\Services\RouterOSService::class);
+                    $router = $customer->router;
+                    
+                    $routerService->connect($router->host, $router->username, $router->password, $router->port);
+                    $response = $routerService->addIpBinding(
+                        $customer->ip_address,
+                        'bypassed',
+                        $customer->mac_address,
+                        "Customer: {$customer->name}",
+                        false
+                    );
+
+                    if (isset($response[0]['.id'])) {
+                        $binding->update(['mikrotik_id' => $response[0]['.id']]);
+                    }
+                } catch (\Exception $e) {
+                    // Log the error but don't stop the process
+                    \Log::error("Failed to sync IP binding with Mikrotik: " . $e->getMessage());
+                }
             }
         });
 
         static::updated(function ($customer) {
-            // Update IP binding if IP address changed
-            if ($customer->ip_address && $customer->wasChanged(['ip_address', 'mac_address'])) {
+            // Update IP binding if IP address or MAC address changed
+            if ($customer->ip_address && $customer->wasChanged(['ip_address', 'mac_address', 'router_id'])) {
                 $binding = $customer->ipBinding;
-                if ($binding) {
-                    $binding->update([
-                        'mac_address' => $customer->mac_address,
-                        'ip_address' => $customer->ip_address,
-                    ]);
-                } else {
-                    IpBinding::create([
-                        'router_id' => $customer->router_id,
-                        'mac_address' => $customer->mac_address,
-                        'ip_address' => $customer->ip_address,
-                        'type' => 'bypassed',
-                        'comment' => "Customer: {$customer->name}",
-                    ]);
+                
+                try {
+                    $routerService = app(\App\Services\RouterOSService::class);
+                    $router = $customer->router;
+                    $routerService->connect($router->host, $router->username, $router->password, $router->port);
+
+                    if ($binding) {
+                        // Update existing binding
+                        $binding->update([
+                            'router_id' => $customer->router_id,
+                            'mac_address' => $customer->mac_address,
+                            'ip_address' => $customer->ip_address,
+                        ]);
+
+                        if ($binding->mikrotik_id) {
+                            $routerService->updateIpBinding(
+                                $binding->mikrotik_id,
+                                $customer->ip_address,
+                                'bypassed',
+                                $customer->mac_address,
+                                "Customer: {$customer->name}",
+                                false
+                            );
+                        }
+                    } else {
+                        // Create new binding
+                        $binding = IpBinding::create([
+                            'router_id' => $customer->router_id,
+                            'mac_address' => $customer->mac_address,
+                            'ip_address' => $customer->ip_address,
+                            'type' => 'bypassed',
+                            'comment' => "Customer: {$customer->name}",
+                        ]);
+
+                        $response = $routerService->addIpBinding(
+                            $customer->ip_address,
+                            'bypassed',
+                            $customer->mac_address,
+                            "Customer: {$customer->name}",
+                            false
+                        );
+
+                        if (isset($response[0]['.id'])) {
+                            $binding->update(['mikrotik_id' => $response[0]['.id']]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    // Log the error but don't stop the process
+                    \Log::error("Failed to sync IP binding with Mikrotik: " . $e->getMessage());
                 }
             }
         });
@@ -88,7 +147,24 @@ class Customer extends Model
         static::deleted(function ($customer) {
             // Delete associated IP binding
             if ($customer->ip_address) {
-                $customer->ipBinding?->delete();
+                $binding = $customer->ipBinding;
+                if ($binding) {
+                    try {
+                        // Remove from Mikrotik if we have the Mikrotik ID
+                        if ($binding->mikrotik_id) {
+                            $routerService = app(\App\Services\RouterOSService::class);
+                            $router = $customer->router;
+                            $routerService->connect($router->host, $router->username, $router->password, $router->port);
+                            $routerService->removeIpBinding($binding->mikrotik_id);
+                        }
+                    } catch (\Exception $e) {
+                        // Log the error but don't stop the process
+                        \Log::error("Failed to remove IP binding from Mikrotik: " . $e->getMessage());
+                    }
+
+                    // Delete local binding record
+                    $binding->delete();
+                }
             }
         });
     }

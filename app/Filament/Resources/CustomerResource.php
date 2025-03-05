@@ -10,6 +10,7 @@ use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Filament\Notifications\Notification;
 
 class CustomerResource extends Resource
 {
@@ -47,7 +48,8 @@ class CustomerResource extends Resource
                             ->relationship('router', 'name')
                             ->required()
                             ->searchable()
-                            ->preload(),
+                            ->preload()
+                            ->helperText('IP binding will be automatically created in this router'),
                         Forms\Components\Select::make('service_package_id')
                             ->relationship('servicePackage', 'name')
                             ->required()
@@ -55,7 +57,8 @@ class CustomerResource extends Resource
                             ->preload(),
                         Forms\Components\TextInput::make('ip_address')
                             ->maxLength(255)
-                            ->placeholder('192.168.1.100'),
+                            ->placeholder('192.168.1.100')
+                            ->helperText('Will be automatically added to router IP bindings'),
                         Forms\Components\TextInput::make('mac_address')
                             ->maxLength(255)
                             ->placeholder('00:11:22:33:44:55'),
@@ -76,7 +79,8 @@ class CustomerResource extends Resource
                         Forms\Components\Textarea::make('notes')
                             ->maxLength(65535)
                             ->columnSpanFull(),
-                    ])->columns(2),
+                    ])->columns(2)
+                    ->description('IP address and MAC address will be automatically synchronized with the Mikrotik router'),
             ]);
     }
 
@@ -95,7 +99,8 @@ class CustomerResource extends Resource
                     ->sortable()
                     ->searchable(),
                 Tables\Columns\TextColumn::make('ip_address')
-                    ->searchable(),
+                    ->searchable()
+                    ->description('Synced with Mikrotik'),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
@@ -121,18 +126,6 @@ class CustomerResource extends Resource
             ])
             ->actions([
                 Tables\Actions\EditAction::make(),
-                Tables\Actions\Action::make('generate_invoice')
-                    ->icon('heroicon-o-document-text')
-                    ->color('success')
-                    ->action(function (Customer $record) {
-                        $invoice = $record->invoices()->create([
-                            'service_package_id' => $record->service_package_id,
-                            'amount' => $record->servicePackage->price,
-                            'invoice_date' => now(),
-                            'due_date' => $record->due_date,
-                        ]);
-                        return redirect()->route('filament.admin.resources.invoices.edit', ['record' => $invoice]);
-                    }),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
