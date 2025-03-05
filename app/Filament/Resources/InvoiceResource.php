@@ -10,6 +10,7 @@ use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Filament\Notifications\Notification;
 
 class InvoiceResource extends Resource
 {
@@ -164,6 +165,43 @@ class InvoiceResource extends Resource
                     }),
             ])
             ->actions([
+                Tables\Actions\Action::make('payment')
+                    ->icon('heroicon-o-currency-dollar')
+                    ->color('success')
+                    ->visible(fn (Invoice $record) => in_array($record->status, ['unpaid', 'overdue']))
+                    ->form([
+                        Forms\Components\Select::make('payment_method_id')
+                            ->label('Payment Method')
+                            ->relationship('paymentMethod', 'name')
+                            ->required()
+                            ->preload()
+                            ->searchable(),
+                        Forms\Components\DatePicker::make('paid_date')
+                            ->label('Payment Date')
+                            ->required()
+                            ->default(now()),
+                        Forms\Components\FileUpload::make('payment_proof')
+                            ->label('Payment Proof')
+                            ->image()
+                            ->directory('payment-proofs'),
+                        Forms\Components\Textarea::make('notes')
+                            ->label('Payment Notes')
+                            ->maxLength(65535),
+                    ])
+                    ->action(function (Invoice $record, array $data): void {
+                        $record->update([
+                            'payment_method_id' => $data['payment_method_id'],
+                            'paid_date' => $data['paid_date'],
+                            'payment_proof' => $data['payment_proof'] ?? null,
+                            'notes' => $data['notes'],
+                            'status' => 'paid',
+                        ]);
+
+                        Notification::make()
+                            ->title('Payment Recorded')
+                            ->success()
+                            ->send();
+                    }),
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\Action::make('print')
                     ->icon('heroicon-o-printer')
