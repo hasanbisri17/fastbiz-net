@@ -16,7 +16,7 @@ class Invoice extends Model
         'due_date',
         'paid_date',
         'status',
-        'payment_method',
+        'payment_method_id',
         'payment_proof',
         'notes',
     ];
@@ -36,6 +36,11 @@ class Invoice extends Model
     public function servicePackage(): BelongsTo
     {
         return $this->belongsTo(ServicePackage::class);
+    }
+
+    public function paymentMethod(): BelongsTo
+    {
+        return $this->belongsTo(PaymentMethod::class);
     }
 
     protected static function booted()

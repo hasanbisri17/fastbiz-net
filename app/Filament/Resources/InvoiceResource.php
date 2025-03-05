@@ -64,8 +64,31 @@ class InvoiceResource extends Resource
                             ])
                             ->required()
                             ->default('unpaid'),
-                        Forms\Components\TextInput::make('payment_method')
-                            ->maxLength(255),
+                        Forms\Components\Select::make('payment_method_id')
+                            ->relationship('paymentMethod', 'name')
+                            ->searchable()
+                            ->preload()
+                            ->createOptionForm([
+                                Forms\Components\TextInput::make('name')
+                                    ->required()
+                                    ->maxLength(255),
+                                Forms\Components\Select::make('type')
+                                    ->options([
+                                        'cash' => 'Cash',
+                                        'bank_transfer' => 'Bank Transfer',
+                                        'e_wallet' => 'E-Wallet',
+                                    ])
+                                    ->required(),
+                                Forms\Components\TextInput::make('account_number')
+                                    ->maxLength(255),
+                                Forms\Components\TextInput::make('account_name')
+                                    ->maxLength(255),
+                                Forms\Components\TextInput::make('bank_name')
+                                    ->maxLength(255),
+                                Forms\Components\Toggle::make('is_active')
+                                    ->default(true)
+                                    ->required(),
+                            ]),
                         Forms\Components\FileUpload::make('payment_proof')
                             ->image()
                             ->directory('payment-proofs'),
@@ -97,6 +120,9 @@ class InvoiceResource extends Resource
                 Tables\Columns\TextColumn::make('due_date')
                     ->date()
                     ->sortable(),
+                Tables\Columns\TextColumn::make('paymentMethod.name')
+                    ->searchable()
+                    ->sortable(),
                 Tables\Columns\TextColumn::make('status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
@@ -111,6 +137,8 @@ class InvoiceResource extends Resource
                     ->relationship('customer', 'name'),
                 Tables\Filters\SelectFilter::make('service_package')
                     ->relationship('servicePackage', 'name'),
+                Tables\Filters\SelectFilter::make('payment_method')
+                    ->relationship('paymentMethod', 'name'),
                 Tables\Filters\SelectFilter::make('status')
                     ->options([
                         'unpaid' => 'Unpaid',
