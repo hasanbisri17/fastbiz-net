@@ -22,14 +22,26 @@ class ListInvoices extends ListRecords
                 ->color('danger')
                 ->action(function () {
                     try {
-                        $overdueCount = Invoice::where('status', 'unpaid')
-                            ->where('due_date', '<', now())
-                            ->update(['status' => 'overdue']);
+                        $count = 0;
+                        $errors = [];
 
-                        if ($overdueCount > 0) {
+                        Invoice::where('status', 'unpaid')
+                            ->where('due_date', '<', now())
+                            ->chunk(100, function ($invoices) use (&$count, &$errors) {
+                                foreach ($invoices as $invoice) {
+                                    try {
+                                        $invoice->update(['status' => 'overdue']);
+                                        $count++;
+                                    } catch (\Exception $e) {
+                                        $errors[] = "Failed to update invoice #{$invoice->invoice_number}: {$e->getMessage()}";
+                                    }
+                                }
+                            });
+
+                        if ($count > 0) {
                             Notification::make()
                                 ->title('Success')
-                                ->body("{$overdueCount} invoices marked as overdue")
+                                ->body("{$count} invoices marked as overdue")
                                 ->success()
                                 ->send();
                         } else {
@@ -37,6 +49,14 @@ class ListInvoices extends ListRecords
                                 ->title('Information')
                                 ->body('No unpaid invoices found past their due date')
                                 ->info()
+                                ->send();
+                        }
+
+                        if (!empty($errors)) {
+                            Notification::make()
+                                ->title('Warning')
+                                ->body(implode("\n", $errors))
+                                ->warning()
                                 ->send();
                         }
                     } catch (\Exception $e) {
@@ -49,7 +69,7 @@ class ListInvoices extends ListRecords
                 })
                 ->requiresConfirmation()
                 ->modalHeading('Mark Overdue Invoices')
-                ->modalDescription('This will mark all unpaid invoices past their due date as overdue.')
+                ->modalDescription('This will mark all unpaid invoices past their due date as overdue. This will also change their IP Binding type to "regular" in Mikrotik.')
                 ->modalSubmitActionLabel('Mark Overdue'),
         ];
     }

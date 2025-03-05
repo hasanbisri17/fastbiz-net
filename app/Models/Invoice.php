@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Services\RouterOSService;
 
 class Invoice extends Model
 {
@@ -50,6 +51,58 @@ class Invoice extends Model
                 $invoice->invoice_number = static::generateInvoiceNumber();
             }
         });
+
+        // When an invoice becomes overdue, change IP binding to regular
+        static::updated(function ($invoice) {
+            if ($invoice->status === 'overdue' && $invoice->getOriginal('status') !== 'overdue') {
+                static::updateCustomerIpBinding($invoice->customer, 'regular');
+            }
+            
+            // When an invoice is paid, change IP binding back to bypassed
+            if ($invoice->status === 'paid' && $invoice->getOriginal('status') !== 'paid') {
+                static::updateCustomerIpBinding($invoice->customer, 'bypassed');
+            }
+        });
+    }
+
+    protected static function updateCustomerIpBinding($customer, $type)
+    {
+        if (!$customer || !$customer->ip_address || !$customer->router_id) {
+            return;
+        }
+
+        try {
+            $binding = $customer->ipBinding;
+            if (!$binding) {
+                return;
+            }
+
+            $routerService = app(RouterOSService::class);
+            $router = $customer->router;
+            
+            $routerService->connect($router->host, $router->username, $router->password, $router->port);
+            
+            // Update in Mikrotik
+            if ($binding->mikrotik_id) {
+                $routerService->updateIpBinding(
+                    $binding->mikrotik_id,
+                    $customer->ip_address,
+                    $type,
+                    $customer->mac_address,
+                    "Customer: {$customer->name}",
+                    false
+                );
+            }
+
+            // Update in database
+            $binding->update([
+                'type' => $type
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error("Failed to update IP binding type: " . $e->getMessage());
+            throw $e;
+        }
     }
 
     public static function generateInvoiceNumber(): string
@@ -70,5 +123,12 @@ class Invoice extends Model
         }
 
         return sprintf("%s%s%s%04d", $prefix, $year, $month, $sequence);
+    }
+
+    public function markOverdue()
+    {
+        if ($this->status === 'unpaid' && $this->due_date < now()) {
+            $this->update(['status' => 'overdue']);
+        }
     }
 }
